@@ -12,12 +12,12 @@ in the training dataset. It supports mixed-precision training via
 from typing import Any, Optional, Tuple
 
 import torch
+import wandb  # For logging to Weights & Biases
 from torch import GradScaler, nn, optim  # For type hints
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 import config as cfg  # Assuming config.py is accessible
-import wandb  # For logging to Weights & Biases
 from utils import poly_lr_scheduler
 
 # Type alias for the config module for clarity
