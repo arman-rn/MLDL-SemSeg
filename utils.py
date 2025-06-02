@@ -8,6 +8,7 @@ Weights & Biases integration helpers, and image visualization utilities.
 # This includes learning rate scheduling, metrics calculation (mIoU, FLOPs, latency), and Weights & Biases integration helpers.
 
 import os
+import random
 import time
 from typing import Any, Dict, List, Optional
 
@@ -190,6 +191,7 @@ def log_segmentation_to_wandb(
     pred_masks: torch.Tensor,  # These are also 2D label ID tensors (B, H, W)
     epoch: int,  # Current epoch number (1-indexed for display)
     current_config: ConfigModule,  # The config module (e.g., cfg)
+    global_step: int,
     max_images: int = 4,
 ) -> None:
     """
@@ -258,7 +260,7 @@ def log_segmentation_to_wandb(
         log_dict[f"Validation_Epoch_{epoch}_Sample_{i + 1}"] = wandb_image
 
     if log_dict:
-        wandb.log(log_dict)
+        wandb.log(log_dict, step=global_step)
 
 
 # --- Performance Metrics (FLOPs, Latency) ---
@@ -415,7 +417,9 @@ def load_checkpoint(
     )  # Load to specified device or CPU
 
     try:
-        checkpoint: Dict[str, Any] = torch.load(filepath, map_location=map_location)
+        checkpoint: Dict[str, Any] = torch.load(
+            filepath, map_location=map_location, weights_only=False
+        )
     except Exception as e:
         print(
             f"Error loading checkpoint file '{filepath}': {e}. Returning empty state."
@@ -465,3 +469,20 @@ def load_checkpoint(
         "best_model_per_class_ious": checkpoint.get("best_model_per_class_ious"),
         # Include any other saved metadata you need
     }
+
+
+def set_seeds(seed_value):
+    """
+    Sets random seeds for Python's `random`, NumPy, and PyTorch
+    to ensure reproducibility.
+
+    Args:
+        seed_value (int): The integer value to use for seeding.
+    """
+    random.seed(seed_value)
+    np.random.seed(seed_value)
+    torch.manual_seed(seed_value)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed_value)
+
+    print(f"Seeds set to {seed_value}")
