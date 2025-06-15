@@ -205,7 +205,7 @@ GTA5_TRAIN_TRANSFORMS_COARSEDROPOUT_ONLY = A.Compose(
 GTA5_TRAIN_TRANSFORMS_ALL_FOUR_COMBINED = A.Compose(
     [
         gta5_base_resize,
-        aug_transform_hflip,  # Geometric
+        # aug_transform_hflip,  # Geometric
         aug_transform_colorjitter,  # Color/Intensity
         aug_transform_isonoise,  # Noise
         aug_transform_coarsedropout,  # Structural
@@ -264,3 +264,33 @@ CITYSCAPES_VAL_TRANSFORMS = A.Compose(
 
 # 5. Experiment with all four combined:
 GTA5_TRAIN_TRANSFORMS = GTA5_TRAIN_TRANSFORMS_ALL_FOUR_COMBINED
+
+# --- Adversarial Domain Adaptation Settings ---
+
+# Source dataset for adversarial training (labeled)
+ADVERSARIAL_SOURCE_DATASET_NAME = "gta5"
+# Target dataset for adversarial training (unlabeled)
+ADVERSARIAL_TARGET_DATASET_NAME = "cityscapes"
+# Split of the target dataset to use (typically 'train' for unlabeled images)
+ADVERSARIAL_TARGET_DATASET_SPLIT = "train"
+
+# Weight for the generator's adversarial loss component.
+# Paper [7] (Tsai et al. "Learning to Adapt Structured Output Space...") suggests lambda_adv = 0.001
+# for their single-level output space adaptation (see Table 3 and Section 6.1 Parameter Analysis).
+ADVERSARIAL_LAMBDA_ADV_GENERATOR = 0.002
+# ADVERSARIAL_LAMBDA_ADV_GENERATOR = 0.0002 # More Cautious Adaptation, This is useful if the discriminator's feedback is noisy or hurting the segmentation performance.
+
+# --- Discriminator Optimizer Settings ---
+# Paper [7] uses Adam for the discriminator.
+ADVERSARIAL_DISCRIMINATOR_OPTIMIZER_TYPE = "adam"
+# ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE = 1e-4  # As per Paper [7] for discriminator.
+ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE = 2.5e-5
+
+# Adam specific parameters for Discriminator Optimizer
+# Paper [7] sets momentum for Adam as 0.9 and 0.99.
+# These likely correspond to beta1 and beta2.
+ADVERSARIAL_DISCRIMINATOR_ADAM_BETA1 = 0.9
+ADVERSARIAL_DISCRIMINATOR_ADAM_BETA2 = 0.99
+ADVERSARIAL_DISCRIMINATOR_WEIGHT_DECAY = (
+    0  # Common for GAN discriminators, not specified for D in Paper [7].
+)
