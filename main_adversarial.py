@@ -1,6 +1,8 @@
 """
 Main script for orchestrating ADVERSARIAL domain adaptation training
 for semantic segmentation (e.g., GTA5 -> Cityscapes).
+
+Supports both single-level and multi-level adversarial training.
 """
 
 import argparse
@@ -15,12 +17,15 @@ from torch import GradScaler, nn, optim
 
 import config as cfg
 from data_loader import CITYSCAPES_ID_TO_NAME_MAP, get_loaders
+from losses.lovasz_loss import LovaszSoftmax
 from model_loader import get_discriminator, get_model
 from train import train_one_epoch_adversarial
+from train_lovasz import train_one_epoch_adversarial_lovasz
 from utils import (
     calculate_performance_metrics,
     init_wandb,
-    load_checkpoint,
+    load_adversarial_checkpoint,
+    log_best_model_predictions,
     save_checkpoint,
     set_seeds,
 )
@@ -36,7 +41,6 @@ def main_adversarial():
     parser = argparse.ArgumentParser(
         description="Adversarial Domain Adaptation for Semantic Segmentation"
     )
-    # Add arguments to override config for generator, epochs, resume, paths etc.
     parser.add_argument(
         "--generator_model",
         type=str,
@@ -69,7 +73,6 @@ def main_adversarial():
         default=None,
         help="Path to checkpoint to resume training from. Overrides config.RESUME_CHECKPOINT_PATH.",
     )
-    # Paths can also be overridden if needed
     parser.add_argument(
         "--gta5_path", type=str, default=None, help="Overrides config.GTA5_DATASET_PATH"
     )
@@ -114,7 +117,9 @@ def main_adversarial():
 
     # --- Log Effective Configuration ---
     print("--- ADVERSARIAL TRAINING - Effective Configuration ---")
-    print(f"Generator Model: {cfg.MODEL_NAME.upper()}")
+    print("Training Mode: SINGLE-LEVEL Adversarial")
+    print(f"  Lambda Adversarial: {cfg.ADVERSARIAL_LAMBDA_ADV_GENERATOR}")
+
     # Determine Generator LR based on its optimizer type
     current_g_base_lr = 0.0
     if cfg.OPTIMIZER_TYPE.lower() == "sgd":
@@ -130,10 +135,10 @@ def main_adversarial():
         f"  Target Dataset (Unlabeled): {cfg.ADVERSARIAL_TARGET_DATASET_NAME.upper()} (Split: {cfg.ADVERSARIAL_TARGET_DATASET_SPLIT})"
     )
     print(f"  Validation Dataset: {cfg.VAL_DATASET.upper()}")
-    print(
-        f"  Discriminator Optimizer: {cfg.ADVERSARIAL_DISCRIMINATOR_OPTIMIZER_TYPE.upper()} with LR: {cfg.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE}"
-    )
     print(f"  Lambda Adversarial (Generator): {cfg.ADVERSARIAL_LAMBDA_ADV_GENERATOR}")
+    print(
+        f"Discriminator Optimizer: {cfg.ADVERSARIAL_DISCRIMINATOR_OPTIMIZER_TYPE.upper()} with LR: {cfg.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE}"
+    )
     print(f"Training for {cfg.TRAIN_EPOCHS} epochs.")
     print(f"Device: {cfg.DEVICE}")
     print(f"Batch Size: {cfg.BATCH_SIZE}")
@@ -185,9 +190,10 @@ def main_adversarial():
 
     # --- Models ---
     model_G = get_model(config_obj=cfg)  # Generator (BiSeNet)
-    model_D = get_discriminator(config_obj=cfg)  # Discriminator
+    model_D = get_discriminator(config_obj=cfg)  # Discriminators
+
     if model_D is None:
-        print("CRITICAL ERROR: Discriminator model could not be initialized.")
+        print("CRITICAL ERROR: Main Discriminator model could not be initialized.")
         if wandb.run:
             wandb.finish(exit_code=1)
         return
@@ -211,27 +217,25 @@ def main_adversarial():
     else:
         raise ValueError(f"Unsupported generator optimizer type: {cfg.OPTIMIZER_TYPE}")
 
-    # Discriminator Optimizer
-    if cfg.ADVERSARIAL_DISCRIMINATOR_OPTIMIZER_TYPE.lower() == "adam":
-        optimizer_D = optim.Adam(
-            model_D.parameters(),
-            lr=cfg.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE,
-            betas=(
-                cfg.ADVERSARIAL_DISCRIMINATOR_ADAM_BETA1,
-                cfg.ADVERSARIAL_DISCRIMINATOR_ADAM_BETA2,
-            ),
-            weight_decay=cfg.ADVERSARIAL_DISCRIMINATOR_WEIGHT_DECAY,
-        )
-    # Add SGD for discriminator if needed
-    else:
-        raise ValueError(
-            f"Unsupported discriminator optimizer: {cfg.ADVERSARIAL_DISCRIMINATOR_OPTIMIZER_TYPE}"
-        )
+    # Discriminator Optimizer(s)
+    optimizer_D = optim.Adam(
+        model_D.parameters(),
+        lr=cfg.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE,
+        betas=(
+            cfg.ADVERSARIAL_DISCRIMINATOR_ADAM_BETA1,
+            cfg.ADVERSARIAL_DISCRIMINATOR_ADAM_BETA2,
+        ),
+    )
 
     # --- Loss Functions ---
-    criterion_seg = nn.CrossEntropyLoss(
+    criterion_seg_ce = nn.CrossEntropyLoss(
         ignore_index=cfg.IGNORE_INDEX
-    )  # For Generator's segmentation task
+    )  # For Generator's segmentation task (Cross-Entropy)
+    criterion_seg_lovasz = None
+    if cfg.USE_LOVASZ_LOSS:
+        criterion_seg_lovasz = LovaszSoftmax(
+            ignore=cfg.IGNORE_INDEX
+        )  # For Generator's segmentation task (Lovasz-Softmax)
     criterion_adv = (
         nn.BCEWithLogitsLoss()
     )  # For adversarial training (D loss, and G's adv loss)
@@ -249,15 +253,16 @@ def main_adversarial():
 
     if cfg.RESUME_CHECKPOINT_PATH and os.path.exists(cfg.RESUME_CHECKPOINT_PATH):
         print(f"Attempting to resume from checkpoint: {cfg.RESUME_CHECKPOINT_PATH}")
-        checkpoint_data = load_checkpoint(
+        checkpoint_data = load_adversarial_checkpoint(
             filepath=cfg.RESUME_CHECKPOINT_PATH,
             model_G=model_G,
+            model_D=model_D,
             optimizer_G=optimizer_G,
+            optimizer_D=optimizer_D,
             scaler=scaler,
             device=cfg.DEVICE,
-            model_D=model_D,
-            optimizer_D=optimizer_D,  # Pass D components
         )
+
         if checkpoint_data:
             start_epoch = checkpoint_data.get("epoch", -1) + 1
             global_step = checkpoint_data.get("global_step", 0)
@@ -265,6 +270,7 @@ def main_adversarial():
             print(
                 f"Resumed from Epoch {start_epoch}. Global Step: {global_step}. Best mIoU (Generator): {best_miou:.4f}"
             )
+
     else:
         if cfg.RESUME_CHECKPOINT_PATH:
             print(
@@ -280,39 +286,60 @@ def main_adversarial():
             log="all",
             log_freq=cfg.PRINT_FREQ_BATCH * 5,
             log_graph=True,
-            criterion=criterion_seg,
+            criterion=criterion_seg_ce,
         )
-        wandb.watch(
-            model_D, log="all", log_freq=cfg.PRINT_FREQ_BATCH * 10, log_graph=False
-        )  # No criterion for D typically
+        wandb.watch(model_D, log="all", log_freq=cfg.PRINT_FREQ_BATCH * 10)
 
     # --- Adversarial Training & Validation Loop ---
-    max_iter = cfg.TRAIN_EPOCHS * len(
-        source_loader
-    )  # Max iterations for LR scheduler (based on source loader)
+    max_iter = cfg.TRAIN_EPOCHS * len(source_loader)
 
     for epoch in range(start_epoch, cfg.TRAIN_EPOCHS):
-        print(f"\n--- Epoch {epoch + 1}/{cfg.TRAIN_EPOCHS} [Adversarial] ---")
-
-        avg_losses_dict, global_step = train_one_epoch_adversarial(
-            model_G=model_G,
-            optimizer_G=optimizer_G,
-            criterion_seg=criterion_seg,
-            train_loader_source=source_loader,
-            initial_base_lr_G=current_g_base_lr,
-            model_D=model_D,
-            optimizer_D=optimizer_D,
-            criterion_adv=criterion_adv,
-            train_loader_target=target_loader_infinite,
-            initial_base_lr_D=cfg.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE,
-            device=cfg.DEVICE,
-            epoch=epoch,
-            global_step_offset=global_step,
-            max_iter=max_iter,
-            effective_total_epochs=cfg.TRAIN_EPOCHS,
-            config_module_ref=cfg,
-            scaler=scaler,
+        print(
+            f"\n--- Epoch {epoch + 1}/{cfg.TRAIN_EPOCHS} {'[Multi-Level]' if is_multi_level else '[Single-Level]'} ---"
         )
+
+        if cfg.USE_LOVASZ_LOSS and criterion_seg_lovasz is not None:
+            avg_losses_dict, global_step = train_one_epoch_adversarial_lovasz(
+                model_G=model_G,
+                optimizer_G=optimizer_G,
+                criterion_seg_ce=criterion_seg_ce,
+                criterion_seg_lovasz=criterion_seg_lovasz,
+                lovasz_weight=cfg.LOVASZ_LOSS_WEIGHT,
+                train_loader_source=source_loader,
+                initial_base_lr_G=current_g_base_lr,
+                model_D=model_D,
+                optimizer_D=optimizer_D,
+                criterion_adv=criterion_adv,
+                train_loader_target=target_loader_infinite,
+                initial_base_lr_D=cfg.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE,
+                device=cfg.DEVICE,
+                epoch=epoch,
+                global_step_offset=global_step,
+                max_iter=max_iter,
+                effective_total_epochs=cfg.TRAIN_EPOCHS,
+                config_module_ref=cfg,
+                scaler=scaler,
+            )
+        else:
+            avg_losses_dict, global_step = train_one_epoch_adversarial(
+                model_G=model_G,
+                optimizer_G=optimizer_G,
+                criterion_seg=criterion_seg_ce,
+                train_loader_source=source_loader,
+                initial_base_lr_G=current_g_base_lr,
+                model_D=model_D,
+                optimizer_D=optimizer_D,
+                criterion_adv=criterion_adv,
+                train_loader_target=target_loader_infinite,
+                initial_base_lr_D=cfg.ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE,
+                device=cfg.DEVICE,
+                epoch=epoch,
+                global_step_offset=global_step,
+                max_iter=max_iter,
+                effective_total_epochs=cfg.TRAIN_EPOCHS,
+                config_module_ref=cfg,
+                scaler=scaler,
+            )
 
         if wandb.run:  # Log epoch-level average losses
             log_payload_epoch = {"epoch": epoch + 1}
@@ -328,6 +355,19 @@ def main_adversarial():
                 log_payload_epoch["train_adv_epoch/avg_loss_D"] = avg_losses_dict[
                     "loss_D_total"
                 ]
+            if "adv_loss_G" in avg_losses_dict:
+                log_payload_epoch["train_adv_epoch/avg_loss_adv_G"] = avg_losses_dict[
+                    "adv_loss_G"
+                ]
+            if "seg_loss_lovasz_G" in avg_losses_dict:
+                log_payload_epoch["train_adv_epoch/avg_loss_seg_lov_G"] = (
+                    avg_losses_dict["seg_loss_lovasz_G"]
+                )
+            if "seg_loss_ce_G" in avg_losses_dict:
+                log_payload_epoch["train_adv_epoch/avg_loss_seg_ce_G"] = (
+                    avg_losses_dict["seg_loss_ce_G"]
+                )
+
             wandb.log(log_payload_epoch, step=global_step)
 
         # --- Validation (on Generator model_G) ---
@@ -340,7 +380,7 @@ def main_adversarial():
             current_epoch_miou, avg_val_loss, current_per_class_ious = validate_and_log(
                 model=model_G,  # Validate generator
                 val_loader=val_loader,
-                criterion=criterion_seg,  # Use segmentation loss for validation
+                criterion=criterion_seg_ce,  # Use segmentation loss for validation
                 device=cfg.DEVICE,
                 epoch=epoch,
                 global_step=global_step,
@@ -361,10 +401,11 @@ def main_adversarial():
             "global_step": global_step,
             "model_G_state_dict": model_G.state_dict(),
             "optimizer_G_state_dict": optimizer_G.state_dict(),
-            "model_D_state_dict": model_D.state_dict(),  # Save D's state
-            "optimizer_D_state_dict": optimizer_D.state_dict(),  # Save D's optimizer state
-            "best_miou": best_miou,  # Overall best mIoU for the generator
+            "model_D_state_dict": model_D.state_dict(),
+            "optimizer_D_state_dict": optimizer_D.state_dict(),
+            "best_miou": best_miou,
         }
+
         if scaler:
             checkpoint_state["scaler_state_dict"] = scaler.state_dict()
 
@@ -403,9 +444,10 @@ def main_adversarial():
             f"Loading best generator model from {final_eval_model_path} for final evaluation..."
         )
         # Load only generator for final eval on val set. model_G is updated in-place.
-        checkpoint_summary = load_checkpoint(
+        checkpoint_summary = load_adversarial_checkpoint(
             filepath=final_eval_model_path,
-            model_G=model_G,
+            model_G=model_G,  # The generator model to load into
+            model_D=model_D,  # Pass discriminator models, though they won't be used
             device=cfg.DEVICE,
         )
         if checkpoint_summary:
@@ -414,20 +456,17 @@ def main_adversarial():
             if loaded_per_class_ious is not None:
                 final_per_class_ious_to_report = loaded_per_class_ious
                 print("Loaded per-class IoUs from the best generator checkpoint.")
-        # ... (rest of the logic for handling missing checkpoint or keys)
     else:
         print(
             f"CRITICAL WARNING: Best checkpoint file '{cfg.BEST_CHECKPOINT_FILENAME}' not found at '{final_eval_model_path}'."
         )
-        best_miou_for_summary_report = (
-            best_miou  # Fallback to best_miou from training loop
-        )
+        best_miou_for_summary_report = best_miou
 
     print(
         "\nCalculating performance metrics (FLOPs, Latency on final generator model state)..."
     )
     perf_metrics = calculate_performance_metrics(
-        model_G,  # Ensure this is the generator
+        model_G,
         cfg.DEVICE,
         cfg.CITYSCAPES_IMG_HEIGHT,
         cfg.CITYSCAPES_IMG_WIDTH,
@@ -440,7 +479,6 @@ def main_adversarial():
     print(
         f"| Best Overall mIoU (Generator) on {cfg.VAL_DATASET.upper()} (%) | {best_miou_for_summary_report * 100:.2f} |"
     )
-    # ... (print other metrics: latency, FLOPs, params for Generator)
     print(
         f"| Latency (ms) @ {cfg.CITYSCAPES_IMG_WIDTH}x{cfg.CITYSCAPES_IMG_HEIGHT} | {perf_metrics.get('mean_latency_ms', -1.0):.2f} +/- {perf_metrics.get('std_latency_ms', -1.0):.2f} |"
     )
@@ -483,6 +521,15 @@ def main_adversarial():
                 wandb.summary[f"{run_name_prefix}_final_iou_G_{class_name}"] = float(
                     iou_val
                 )
+
+        # ---  Log final predictions from the best generator model ---
+        log_best_model_predictions(
+            model=model_G,  # Use the generator model
+            val_loader=val_loader,
+            device=cfg.DEVICE,
+            config_module_ref=cfg,
+            num_images=6,
+        )
         wandb.finish()
 
     print("Adversarial run completed.")

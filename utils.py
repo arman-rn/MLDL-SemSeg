@@ -16,6 +16,7 @@ import torch
 import wandb
 from fvcore.nn import FlopCountAnalysis, flop_count_table
 from torch import GradScaler, nn, optim
+from torch.utils.data import DataLoader
 
 from data_loader import CITYSCAPES_ID_TO_NAME_MAP
 
@@ -248,8 +249,11 @@ def log_segmentation_to_wandb(
 
     for i in range(num_to_log):
         # Denormalize image for visualization
-        img_to_log: torch.Tensor = (images[i].clone() * std_tensor) + mean_tensor
-        img_to_log = img_to_log.clamp(0, 1)
+        img_denorm_4d = (images[i].clone() * std_tensor) + mean_tensor
+        img_denorm_4d = img_denorm_4d.clamp(0, 1)
+
+        # Squeeze the extra batch dimension to get the required 3D tensor (C, H, W)
+        img_to_log = img_denorm_4d.squeeze(0)
 
         # Prepare 2D numpy arrays for mask_data from the label ID tensors
         true_mask_np_2d: np.ndarray = true_masks[i].cpu().numpy()
@@ -414,139 +418,135 @@ def save_checkpoint(state: Dict[str, Any], filepath: str) -> None:
             print(f"Warning: Could not save checkpoint to W&B artifacts: {e}")
 
 
-def load_checkpoint(
+def load_vanilla_checkpoint(
     filepath: str,
-    model_G: nn.Module,  # Generator model
-    optimizer_G: Optional[optim.Optimizer] = None,  # Optimizer for generator
+    model: nn.Module,
+    optimizer: Optional[optim.Optimizer] = None,
     scaler: Optional[GradScaler] = None,
     device: Optional[torch.device] = None,
-    # Optional components for adversarial training
-    model_D: Optional[nn.Module] = None,  # Discriminator model
-    optimizer_D: Optional[optim.Optimizer] = None,  # Discriminator optimizer
 ) -> Dict[str, Any]:
     """
-    Loads training state from a checkpoint file.
-    Handles both standard and adversarial training checkpoints.
+    Loads a checkpoint for standard (vanilla) training.
 
     Args:
         filepath: Path to the checkpoint file.
-        model_G: The generator model instance to load the state_dict into.
-        optimizer_G: The generator optimizer instance to load the state_dict into (optional).
+        model: The model instance to load the state_dict into.
+        optimizer: The optimizer instance to load the state_dict into (optional).
         scaler: The GradScaler instance to load the state_dict into (optional).
-        device: The torch.device to map the loaded tensors to. If None, loads to CPU first.
-        model_D: The discriminator model instance (optional, for adversarial).
-        optimizer_D: The discriminator optimizer instance (optional, for adversarial).
+        device: The torch.device to map loaded tensors to.
 
     Returns:
-        A dictionary containing the loaded state, or an empty dictionary if not found.
-        Keys include 'epoch', 'global_step', 'best_miou', 'best_model_per_class_ious'.
-        If adversarial, it may also contain 'model_D_state_dict', 'optimizer_D_state_dict'.
+        A dictionary with metadata like 'epoch', 'best_miou', etc.
     """
     if not os.path.exists(filepath):
         print(f"Warning: Checkpoint file not found at '{filepath}'. Cannot resume.")
-        return {}  # Return empty dict to indicate no checkpoint was loaded
-
-    print(f"Loading checkpoint from '{filepath}'...")
-    map_location = device if device else torch.device("cpu")
-
-    try:
-        checkpoint: Dict[str, Any] = torch.load(
-            filepath, map_location=map_location, weights_only=False
-        )
-    except Exception as e:
-        print(
-            f"Error loading checkpoint file '{filepath}': {e}. Returning empty state."
-        )
         return {}
 
-    # Load Generator (model_G) state
-    # Prioritize new key 'model_G_state_dict', fallback to 'model_state_dict' for backward compatibility
-    g_model_state_key = (
-        "model_G_state_dict"
-        if "model_G_state_dict" in checkpoint
-        else "model_state_dict"
-    )
-    if g_model_state_key in checkpoint:
-        model_G.load_state_dict(checkpoint[g_model_state_key])
-        print(f"Generator ({g_model_state_key}) weights loaded.")
+    print(f"Loading vanilla checkpoint from '{filepath}'...")
+    map_location = device if device else torch.device("cpu")
+    checkpoint = torch.load(filepath, map_location=map_location, weights_only=False)
+
+    # Use a flexible key for the model state dictionary
+    model_key = "model_state_dict"
+    if model_key not in checkpoint:
+        # Fallback for compatibility with checkpoints saved from adversarial training
+        model_key = "model_G_state_dict"
+
+    if model_key in checkpoint:
+        model.load_state_dict(checkpoint[model_key])
+        print(f"Model state loaded from key: '{model_key}'.")
     else:
         print(
-            f"Warning: Generator state_dict ('model_G_state_dict' or 'model_state_dict') not found in '{filepath}'."
+            "Warning: Could not find model state_dict in checkpoint with keys 'model_state_dict' or 'model_G_state_dict'."
         )
 
-    # Load Generator Optimizer (optimizer_G) state
-    if optimizer_G:
-        g_opt_state_key = (
-            "optimizer_G_state_dict"
-            if "optimizer_G_state_dict" in checkpoint
-            else "optimizer_state_dict"
-        )
-        if g_opt_state_key in checkpoint:
-            try:
-                optimizer_G.load_state_dict(checkpoint[g_opt_state_key])
-                if (
-                    device and device.type == "cuda"
-                ):  # Move optimizer states to GPU if needed
-                    for state in optimizer_G.state.values():
-                        for k, v in state.items():
-                            if isinstance(v, torch.Tensor):
-                                state[k] = v.to(device)
-                print(f"Generator Optimizer ({g_opt_state_key}) state loaded.")
-            except Exception as e:
-                print(
-                    f"Warning: Could not load Generator Optimizer state ({g_opt_state_key}): {e}."
-                )
+    if optimizer:
+        opt_key = "optimizer_state_dict"
+        if opt_key not in checkpoint:
+            # Fallback for compatibility
+            opt_key = "optimizer_G_state_dict"
+
+        if opt_key in checkpoint:
+            optimizer.load_state_dict(checkpoint[opt_key])
+            print(f"Optimizer state loaded from key: '{opt_key}'.")
         else:
-            print(
-                "Warning: Generator Optimizer state_dict ('optimizer_G_state_dict' or 'optimizer_state_dict') not found."
-            )
+            print("Warning: Optimizer state not found in checkpoint.")
 
-    # Load Discriminator (model_D) state if model_D is provided and key exists
-    if model_D and "model_D_state_dict" in checkpoint:
-        model_D.load_state_dict(checkpoint["model_D_state_dict"])
-        print("Discriminator (model_D_state_dict) weights loaded.")
-    elif model_D:  # model_D provided but no state in checkpoint
-        print(
-            f"Note: Discriminator model provided, but 'model_D_state_dict' not found in '{filepath}'. Discriminator may start fresh."
-        )
-
-    # Load Discriminator Optimizer (optimizer_D) state if optimizer_D is provided and key exists
-    if optimizer_D and "optimizer_D_state_dict" in checkpoint:
-        try:
-            optimizer_D.load_state_dict(checkpoint["optimizer_D_state_dict"])
-            if device and device.type == "cuda":  # Move optimizer states to GPU
-                for state in optimizer_D.state.values():
-                    for k, v in state.items():
-                        if isinstance(v, torch.Tensor):
-                            state[k] = v.to(device)
-            print("Discriminator Optimizer (optimizer_D_state_dict) state loaded.")
-        except Exception as e:
-            print(f"Warning: Could not load Discriminator Optimizer state: {e}.")
-    elif optimizer_D:  # optimizer_D provided but no state in checkpoint
-        print(
-            f"Note: Discriminator optimizer provided, but 'optimizer_D_state_dict' not found in '{filepath}'. Optimizer state may be reset."
-        )
-
-    # Load Scaler state
     if scaler and "scaler_state_dict" in checkpoint:
-        try:
-            scaler.load_state_dict(checkpoint["scaler_state_dict"])
-            print("GradScaler state loaded.")
-        except Exception as e:
-            print(
-                f"Warning: Could not load GradScaler state: {e}. Scaler state may be reset."
-            )
+        scaler.load_state_dict(checkpoint["scaler_state_dict"])
+        print("GradScaler state loaded.")
 
-    print("Checkpoint loaded successfully (or attempted).")
-    # Return relevant information for resuming training
+    print("Vanilla checkpoint loaded successfully.")
     return {
-        "epoch": checkpoint.get(
-            "epoch", -1
-        ),  # Return -1 if not found, so start_epoch becomes 0
+        "epoch": checkpoint.get("epoch", -1),
         "global_step": checkpoint.get("global_step", 0),
         "best_miou": checkpoint.get("best_miou", 0.0),
         "best_model_per_class_ious": checkpoint.get("best_model_per_class_ious"),
-        # Checkpoint itself is returned implicitly by modifying models/optimizers in-place
+    }
+
+
+def load_adversarial_checkpoint(
+    filepath: str,
+    model_G: nn.Module,
+    model_D: nn.Module,
+    optimizer_G: Optional[optim.Optimizer] = None,
+    optimizer_D: Optional[optim.Optimizer] = None,
+    scaler: Optional[GradScaler] = None,
+    device: Optional[torch.device] = None,
+) -> Dict[str, Any]:
+    """
+    Loads a checkpoint for adversarial training (single or multi-level).
+
+    Args:
+        filepath: Path to the checkpoint file.
+        model_G: The generator model instance.
+        model_D: The discriminator model instance.
+        optimizer_G: The generator optimizer (optional).
+        optimizer_D: The discriminator optimizer (optional).
+        scaler: The GradScaler instance (optional).
+        device: The torch.device to map loaded tensors to.
+
+    Returns:
+        A dictionary with metadata like 'epoch', 'best_miou', etc.
+    """
+    if not os.path.exists(filepath):
+        print(f"Warning: Checkpoint file not found at '{filepath}'. Cannot resume.")
+        return {}
+
+    print(f"Loading adversarial checkpoint from '{filepath}'...")
+    map_location = device if device else torch.device("cpu")
+    checkpoint = torch.load(filepath, map_location=map_location, weights_only=False)
+
+    # --- Generator ---
+    if "model_G_state_dict" in checkpoint:
+        model_G.load_state_dict(checkpoint["model_G_state_dict"])
+        print("Generator (model_G) weights loaded.")
+    if optimizer_G and "optimizer_G_state_dict" in checkpoint:
+        optimizer_G.load_state_dict(checkpoint["optimizer_G_state_dict"])
+        print("Generator Optimizer (optimizer_G) state loaded.")
+
+    # --- Discriminator ---
+    d_model_key = "model_D_state_dict"
+    d_opt_key = "optimizer_D_state_dict"
+
+    if d_model_key in checkpoint:
+        model_D.load_state_dict(checkpoint[d_model_key])
+        print("Discriminator (model_D) weights loaded.")
+    if optimizer_D and d_opt_key in checkpoint:
+        optimizer_D.load_state_dict(checkpoint[d_opt_key])
+        print("Discriminator Optimizer (optimizer_D) state loaded.")
+
+    # --- Scaler ---
+    if scaler and "scaler_state_dict" in checkpoint:
+        scaler.load_state_dict(checkpoint["scaler_state_dict"])
+        print("GradScaler state loaded.")
+
+    print("Adversarial checkpoint loaded successfully.")
+    return {
+        "epoch": checkpoint.get("epoch", -1),
+        "global_step": checkpoint.get("global_step", 0),
+        "best_miou": checkpoint.get("best_miou", 0.0),
+        "best_model_per_class_ious": checkpoint.get("best_model_per_class_ious"),
     }
 
 
@@ -565,3 +565,88 @@ def set_seeds(seed_value):
         torch.cuda.manual_seed_all(seed_value)
 
     print(f"Seeds set to {seed_value}")
+
+
+@torch.no_grad()
+def log_best_model_predictions(
+    model: nn.Module,
+    val_loader: DataLoader,
+    device: torch.device,
+    config_module_ref: ConfigModule,
+    num_images: int = 8,
+) -> None:
+    """
+    Logs predictions from the best model on a few validation samples to W&B.
+    This is called once at the end of a training run.
+
+    Args:
+        model: The best performing model, already loaded with weights.
+        val_loader: The validation DataLoader to source images from.
+        device: The torch.device to run inference on.
+        config_module_ref: The configuration module (cfg) for parameters.
+        num_images: The number of images to log.
+    """
+    if not wandb.run:
+        print("W&B run not active. Skipping final prediction logging.")
+        return
+
+    print(f"Logging {num_images} sample predictions from the best model to W&B...")
+    model.eval()
+
+    # --- Prepare for denormalization ---
+    norm_mean = getattr(config_module_ref, "NORM_MEAN", (0.0, 0.0, 0.0))
+    norm_std = getattr(config_module_ref, "NORM_STD", (1.0, 1.0, 1.0))
+    mean_tensor = torch.tensor(norm_mean, device=device).view(1, 3, 1, 1)
+    std_tensor = torch.tensor(norm_std, device=device).view(1, 3, 1, 1)
+
+    images_to_log = []
+
+    # --- Collect samples from the validation loader ---
+    for i, (images, true_masks) in enumerate(val_loader):
+        if len(images_to_log) >= num_images:
+            break
+
+        # Get a single image and mask
+        image = images[0:1].to(device)  # Keep batch dim, shape (1, C, H, W)
+        true_mask = true_masks[0:1].to(device)  # Shape (1, H, W)
+
+        # --- Run Inference ---
+        outputs = model(image)
+        pred_mask = torch.argmax(outputs, dim=1)  # Shape (1, H, W)
+
+        # --- Prepare for logging ---
+        # Denormalize image for visualization
+        img_to_denorm = image.squeeze(0).clone()  # Shape (C, H, W)
+        # Broadcasting std_tensor (1,C,1,1) makes the result 4D
+        img_denorm_4d = (img_to_denorm * std_tensor) + mean_tensor
+        img_denorm_4d = img_denorm_4d.clamp(0, 1)
+        # *** FIX: Squeeze the result back to 3D for wandb ***
+        img_denorm_3d = img_denorm_4d.squeeze(0)
+
+        # Get 2D numpy arrays for W&B masks
+        true_mask_np = true_mask.squeeze(0).cpu().numpy()
+        pred_mask_np = pred_mask.squeeze(0).cpu().numpy()
+
+        # Create wandb.Image object
+        wandb_image = wandb.Image(
+            img_denorm_3d,  # Pass the corrected 3D tensor
+            masks={
+                "ground_truth": {
+                    "mask_data": true_mask_np,
+                    "class_labels": CITYSCAPES_ID_TO_NAME_MAP,
+                },
+                "prediction": {
+                    "mask_data": pred_mask_np,
+                    "class_labels": CITYSCAPES_ID_TO_NAME_MAP,
+                },
+            },
+            caption=f"Sample {i + 1}",
+        )
+        images_to_log.append(wandb_image)
+
+    # --- Log to W&B ---
+    if images_to_log:
+        wandb.log({"final_best_model_predictions": images_to_log})
+        print("Finished logging sample predictions.")
+    else:
+        print("Could not retrieve any images from validation loader to log.")

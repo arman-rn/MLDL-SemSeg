@@ -294,3 +294,9 @@ ADVERSARIAL_DISCRIMINATOR_ADAM_BETA2 = 0.99
 ADVERSARIAL_DISCRIMINATOR_WEIGHT_DECAY = (
     0  # Common for GAN discriminators, not specified for D in Paper [7].
 )
+
+# --- Lovasz-Softmax Loss Extension Settings ---
+# This will be checked by our new main_lovasz.py script.
+USE_LOVASZ_LOSS = True
+# Weight for combining the two losses. L_total = L_ce + w * L_lovasz
+LOVASZ_LOSS_WEIGHT = 0.5
