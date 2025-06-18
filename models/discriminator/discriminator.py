@@ -4,7 +4,7 @@ import torch.nn as nn
 
 class FCDiscriminator(nn.Module):
     """
-    Fully Convolutional Discriminator network based on Tsai et al. (2017) / AdvEnt.
+    Fully Convolutional Discriminator network based on Tsai et al. (2017).
     Takes a probability map (e.g., from a segmentation network) as input and
     outputs a map of scores indicating whether the input is from the source or target domain.
     """
@@ -54,7 +54,7 @@ class FCDiscriminator(nn.Module):
         """Initializes weights of the convolutional layers."""
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                # Normal initialization as often used in GANs (e.g., DCGAN paper)
+                # Normal initialization as often used in GANs
                 nn.init.normal_(m.weight.data, 0.0, 0.02)
                 if m.bias is not None:
                     nn.init.constant_(m.bias.data, 0)

@@ -6,22 +6,18 @@ over Union (mIoU). It's typically called after each training epoch or periodical
 Gradients are disabled during validation for efficiency.
 """
 
-# This file defines the logic to evaluate the model's performance on the validation dataset.
-# It calculates metrics like validation loss and Mean Intersection over Union (mIoU).
-
 from typing import Any, Optional, Tuple
 
 import numpy as np
 import torch
-import wandb  # For logging to Weights & Biases
-from torch import nn  # For type hints
+import wandb
+from torch import nn
 from torch.utils.data import DataLoader
-from tqdm import tqdm  # For progress bar
+from tqdm import tqdm
 
 from data_loader import CITYSCAPES_ID_TO_NAME_MAP
 from utils import fast_hist, log_segmentation_to_wandb, per_class_iou
 
-# Type alias for the config module for clarity
 ConfigModule = Any
 
 
@@ -127,7 +123,7 @@ def validate_and_log(
                 epoch + 1,
                 config_module_ref,
                 global_step=global_step,
-            )  # Pass config_module_ref for NORM_MEAN/STD
+            )
             first_batch_images_logged = True
 
     # Calculate average validation loss
@@ -143,7 +139,6 @@ def validate_and_log(
     print(
         f"\nValidation Epoch {epoch + 1}: Avg Loss: {avg_val_loss:.4f}, Overall Mean IoU: {mean_iou_all_classes:.4f}"
     )
-    # Per-class IoUs are no longer printed here, will be handled in main.py for final summary
 
     # W&B Logging (Epoch-level Validation)
     # Logs validation loss, mIoU, and per-class IoUs to W&B, using global_step to align with training.

@@ -23,7 +23,6 @@ import config as cfg
 from data_loader import InfiniteDataLoader
 from utils import poly_lr_scheduler
 
-# Type alias for the config module for clarity
 ConfigModule = Any
 
 
@@ -51,10 +50,10 @@ def train_one_epoch_lovasz(
     running_loss_ce = 0.0
     running_loss_lovasz = 0.0
 
-    # Progress bar for iterating over batches
+    # Progress bar
     progress_bar = tqdm(
         train_loader,
-        desc=f"Epoch {epoch + 1}/{effective_total_epochs} [Training w/ Lovasz]",  # Use effective_total_epochs
+        desc=f"Epoch {epoch + 1}/{effective_total_epochs} [Training w/ Lovasz]",
         unit="batch",
         leave=False,  # Keep the bar from staying after completion if nested
     )

@@ -109,7 +109,6 @@ def main_adversarial():
             cfg.ADAM_LEARNING_RATE = args.generator_lr
 
     # --- Setup Checkpoint Directory (specific for adversarial runs) ---
-    # Using MODEL_NAME (generator's name) in the path
     cfg.CHECKPOINT_DIR = (
         f"{cfg.ROOT_DIR}/checkpoints/{cfg.MODEL_NAME}_adversarial_GTA2City"
     )
@@ -294,9 +293,7 @@ def main_adversarial():
     max_iter = cfg.TRAIN_EPOCHS * len(source_loader)
 
     for epoch in range(start_epoch, cfg.TRAIN_EPOCHS):
-        print(
-            f"\n--- Epoch {epoch + 1}/{cfg.TRAIN_EPOCHS} {'[Multi-Level]' if is_multi_level else '[Single-Level]'} ---"
-        )
+        print(f"\n--- Epoch {epoch + 1}/{cfg.TRAIN_EPOCHS} [Single-Level] ---")
 
         if cfg.USE_LOVASZ_LOSS and criterion_seg_lovasz is not None:
             avg_losses_dict, global_step = train_one_epoch_adversarial_lovasz(
@@ -410,9 +407,7 @@ def main_adversarial():
             checkpoint_state["scaler_state_dict"] = scaler.state_dict()
 
         if is_best:  # Save best model checkpoint
-            checkpoint_state["best_model_per_class_ious"] = (
-                current_per_class_ious  # For G
-            )
+            checkpoint_state["best_model_per_class_ious"] = current_per_class_ious
             best_checkpoint_path = os.path.join(
                 cfg.CHECKPOINT_DIR, cfg.BEST_CHECKPOINT_FILENAME
             )

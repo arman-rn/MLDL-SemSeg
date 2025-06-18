@@ -22,7 +22,6 @@ import config as cfg
 from data_loader import InfiniteDataLoader
 from utils import poly_lr_scheduler
 
-# Type alias for the config module for clarity
 ConfigModule = Any
 
 
@@ -77,7 +76,7 @@ def train_one_epoch(
     # Progress bar for iterating over batches
     progress_bar = tqdm(
         train_loader,
-        desc=f"Epoch {epoch + 1}/{effective_total_epochs} [Training]",  # Use effective_total_epochs
+        desc=f"Epoch {epoch + 1}/{effective_total_epochs} [Training]",
         unit="batch",
         leave=False,  # Keep the bar from staying after completion if nested
     )

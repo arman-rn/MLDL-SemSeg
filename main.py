@@ -38,7 +38,6 @@ from utils import (
 )
 from validation import validate_and_log
 
-# Type alias for the config module for clarity
 ConfigModule = Any
 
 
@@ -143,14 +142,10 @@ def main():
             cfg.SGD_LEARNING_RATE = args.lr
         elif cfg.OPTIMIZER_TYPE.lower() == "adam":
             cfg.ADAM_LEARNING_RATE = args.lr
-        # If you add more optimizers, handle their LR override here
 
-    # CHECKPOINT_DIR depends on the finalized cfg.MODEL_NAME
     cfg.CHECKPOINT_DIR = f"{cfg.ROOT_DIR}/checkpoints/{cfg.MODEL_NAME}"
 
-    current_weight_decay = (
-        cfg.WEIGHT_DECAY
-    )  # Usually not overridden by CLI in this setup
+    current_weight_decay = cfg.WEIGHT_DECAY
 
     optimizer_log_config = {"optimizer_type": cfg.OPTIMIZER_TYPE}
 
@@ -248,7 +243,7 @@ def main():
         return
 
     # Create the directory to save models if it doesn't exist.
-    os.makedirs(cfg.CHECKPOINT_DIR, exist_ok=True)  # Ensure checkpoint directory exists
+    os.makedirs(cfg.CHECKPOINT_DIR, exist_ok=True)
 
     # Initialize the Weights & Biases run.
     init_wandb(cfg, optimizer_log_config)
@@ -306,7 +301,7 @@ def main():
         criterion_lovasz = LovaszSoftmax(ignore=cfg.IGNORE_INDEX)
         print("Using combined Cross-Entropy and Lovasz-Softmax loss.")
 
-    # Initializes the gradient scaler for mixed-precision training.
+    # Initialize the gradient scaler for mixed-precision training.
     scaler: Optional[GradScaler] = None
     if cfg.DEVICE.type == "cuda":
         scaler = torch.GradScaler()
@@ -332,7 +327,7 @@ def main():
             scaler=scaler,
             device=cfg.DEVICE,
         )
-        if checkpoint_data:  # If checkpoint was successfully loaded
+        if checkpoint_data:
             start_epoch = (
                 checkpoint_data.get("epoch", -1) + 1
             )  # Resume from the next epoch
@@ -508,7 +503,6 @@ def main():
                 print(
                     "Per-class IoUs will be reported as zeros. Ensure checkpoints are saved correctly."
                 )
-                # No re-validation fallback as per the new assumption.
         else:
             print(
                 f"CRITICAL WARNING: Failed to load checkpoint data from {final_eval_model_path} even though file exists."
@@ -519,7 +513,6 @@ def main():
             best_miou_for_summary_report = (
                 best_miou  # Fallback to best_miou from training loop
             )
-            # final_per_class_ious_to_report remains zeros
     else:
         print(
             f"CRITICAL WARNING: Best checkpoint file '{cfg.BEST_CHECKPOINT_FILENAME}' not found at '{final_eval_model_path}'."
@@ -530,7 +523,6 @@ def main():
         best_miou_for_summary_report = (
             best_miou  # Fallback to best_miou from training loop
         )
-        # final_per_class_ious_to_report remains zeros
 
     print(
         "\nCalculating performance metrics (FLOPs, Latency on current model state)..."
@@ -607,6 +599,7 @@ def main():
             config_module_ref=cfg,
             num_images=6,
         )
+
         flop_table_str = perf_metrics.get("flop_table", "FLOPs table not calculated.")
         if isinstance(flop_table_str, str) and "Error" not in flop_table_str:
             try:

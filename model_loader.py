@@ -44,11 +44,9 @@ def get_model(config_obj: ConfigModule) -> nn.Module:
             f"Using DeepLabV2 pretrained backbone from: {config_obj.DEEPLABV2_PRETRAINED_BACKBONE_PATH}"
         )
 
-        # Creates the DeepLabV2 model instance (which is ResNetMulti)
-        # and attempts to load the pretrained backbone weights.
         model = get_deeplab_v2(
             num_classes=num_classes,
-            pretrain=True,  # Instructs get_deeplab_v2 to load ImageNet weights
+            pretrain=True,
             pretrain_model_path=config_obj.DEEPLABV2_PRETRAINED_BACKBONE_PATH,
         )
     elif config_obj.MODEL_NAME == "bisenet":
@@ -57,7 +55,7 @@ def get_model(config_obj: ConfigModule) -> nn.Module:
         # BiSeNet's `build_contextpath` handles loading pretrained ResNet18/101 from torchvision
         model = BiSeNet(
             num_classes=num_classes,
-            context_path=config_obj.BISENET_CONTEXT_PATH,  # e.g., 'resnet18'
+            context_path=config_obj.BISENET_CONTEXT_PATH,
         )
         # BiSeNet's own init_weight() is called within its constructor for non-backbone parts.
     else:

@@ -8,7 +8,7 @@ SEED_VALUE = 42
 
 # --- W&B Project Details ---
 WANDB_PROJECT_NAME = "RTDA-SemSeg"
-WANDB_ENTITY = "RTDA-SemSeg"  # Your W&B username or team name, if None, it uses default
+WANDB_ENTITY = "RTDA-SemSeg"
 
 # --- Project Paths ---
 ROOT_DIR = "."
@@ -38,8 +38,10 @@ VAL_DATASET = "cityscapes"  # Options: "gta5", "cityscapes"
 
 # --- DeepLabV2 Specific ---
 # Path to the ResNet-101 weights pretrained on ImageNet, used to initialize the backbone of DeepLabV2.
-DEEPLABV2_PRETRAINED_BACKBONE_PATH = f"{ROOT_DIR}/models/deeplabv2/DeepLab_resnet_pretrained_imagenet.pth"  # Path to the ResNet-101 weights pretrained on ImageNet, used to initialize the backbone of your DeepLabV2 model. The project specifies using a backbone pre-trained on ImageNet.
-# Example for Colab if model is downloaded by gdown to project: f'{ROOT_DIR}/models/deeplabv2/DeepLab_resnet_pretrained_imagenet.pth'
+DEEPLABV2_PRETRAINED_BACKBONE_PATH = (
+    f"{ROOT_DIR}/models/deeplabv2/DeepLab_resnet_pretrained_imagenet.pth"
+)
+
 
 # --- Checkpoint Settings ---
 # Directory to save all checkpoints (latest, best, periodic)
@@ -51,10 +53,9 @@ CHECKPOINT_FILENAME = "checkpoint.pth"
 
 # Path to a specific checkpoint to resume from. Set via CLI --resume_checkpoint argument,
 # or manually editing to a valid path if you always want to try resuming from it.
-# Example: None, or '/content/RTDA_SemanticSegmentation_Project/checkpoints/best_miou_checkpoint.pth'
 RESUME_CHECKPOINT_PATH = None
 # How often to save a periodic checkpoint (e.g., every N epochs). Set to 0 or less to disable.
-SAVE_CHECKPOINT_FREQ_EPOCH = 5  # Saves/overwrites checkpoint.pth every epoch
+SAVE_CHECKPOINT_FREQ_EPOCH = 5
 
 # --- Model & Dataset Parameters ---
 NUM_CLASSES = 19  # The number of semantic classes the model needs to predict. Cityscapes has 19 evaluation classes.
@@ -70,12 +71,10 @@ GTA5_IMG_WIDTH = 1280
 
 # --- DataLoader Settings ---
 # Number of worker processes for data loading.
-# For Colab T4, 2 is suggested. For A100, can try 2 or 4.
-DATALOADER_NUM_WORKERS = 16  # Default value, can be adjusted based on environment
+DATALOADER_NUM_WORKERS = 16
 
 # --- Training Hyperparameters ---
-TRAIN_EPOCHS = 50  # The total number of times the training loop will iterate over the entire training dataset (50 epochs for Step 2a).
-# Try 8 if using A100
+TRAIN_EPOCHS = 50
 BATCH_SIZE = 8  # The number of images processed in one forward/backward pass during training. Adjust based on GPU memory.
 LR_SCHEDULER_POWER = 0.9  # Parameter for the polynomial learning rate decay scheduler.
 
@@ -84,10 +83,10 @@ LR_SCHEDULER_POWER = 0.9  # Parameter for the polynomial learning rate decay sch
 OPTIMIZER_TYPE = "adam"  # Options: 'sgd', 'adam'
 
 # Common settings
-WEIGHT_DECAY = 1e-4  # A general weight decay, can be overridden per optimizer
+WEIGHT_DECAY = 1e-4
 
 # SGD specific parameters
-SGD_LEARNING_RATE = 2.5e-4  # As per previous setup for SGD
+SGD_LEARNING_RATE = 2.5e-4
 SGD_MOMENTUM = 0.9
 
 # Adam specific parameters
@@ -275,28 +274,19 @@ ADVERSARIAL_TARGET_DATASET_NAME = "cityscapes"
 ADVERSARIAL_TARGET_DATASET_SPLIT = "train"
 
 # Weight for the generator's adversarial loss component.
-# Paper [7] (Tsai et al. "Learning to Adapt Structured Output Space...") suggests lambda_adv = 0.001
-# for their single-level output space adaptation (see Table 3 and Section 6.1 Parameter Analysis).
+# Paper [7] (Tsai et al. "Learning to Adapt Structured Output Space...") suggests lambda_adv = 0.001 for their single-level output space adaptation
 ADVERSARIAL_LAMBDA_ADV_GENERATOR = 0.002
-# ADVERSARIAL_LAMBDA_ADV_GENERATOR = 0.0002 # More Cautious Adaptation, This is useful if the discriminator's feedback is noisy or hurting the segmentation performance.
 
 # --- Discriminator Optimizer Settings ---
-# Paper [7] uses Adam for the discriminator.
 ADVERSARIAL_DISCRIMINATOR_OPTIMIZER_TYPE = "adam"
-# ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE = 1e-4  # As per Paper [7] for discriminator.
 ADVERSARIAL_DISCRIMINATOR_LEARNING_RATE = 2.5e-5
 
 # Adam specific parameters for Discriminator Optimizer
-# Paper [7] sets momentum for Adam as 0.9 and 0.99.
-# These likely correspond to beta1 and beta2.
 ADVERSARIAL_DISCRIMINATOR_ADAM_BETA1 = 0.9
 ADVERSARIAL_DISCRIMINATOR_ADAM_BETA2 = 0.99
-ADVERSARIAL_DISCRIMINATOR_WEIGHT_DECAY = (
-    0  # Common for GAN discriminators, not specified for D in Paper [7].
-)
+ADVERSARIAL_DISCRIMINATOR_WEIGHT_DECAY = 0  # Common for GAN discriminators.
 
 # --- Lovasz-Softmax Loss Extension Settings ---
-# This will be checked by our new main_lovasz.py script.
 USE_LOVASZ_LOSS = True
 # Weight for combining the two losses. L_total = L_ce + w * L_lovasz
 LOVASZ_LOSS_WEIGHT = 0.5
