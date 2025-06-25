@@ -53,3 +53,5 @@ build/
 pip-wheel-metadata/
 
 wandb/
+
+notebooks/
